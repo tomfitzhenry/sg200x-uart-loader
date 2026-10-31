@@ -1,0 +1,64 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Verify annotated semver tag
+        run: |
+          ref="${GITHUB_REF_NAME}"
+          if ! printf '%s' "$ref" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "tag $ref is not vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          if [ "$(git for-each-ref --format='%(objecttype)' "refs/tags/$ref")" != "tag" ]; then
+            echo "tag $ref is not annotated" >&2
+            exit 1
+          fi
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Build release binaries
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X main.version=${GITHUB_REF_NAME}" \
+              -o "dist/sg200x-uart-loader-linux-${arch}" .
+            file "dist/sg200x-uart-loader-linux-${arch}"
+            (cd dist && sha256sum "sg200x-uart-loader-linux-${arch}" > "sg200x-uart-loader-linux-${arch}.sha256")
+          done
+          (cd dist && sha256sum sg200x-uart-loader-linux-* | grep -v '\.sha256$' > SHA256SUMS)
+          cat dist/SHA256SUMS
+      - name: Build source tarball
+        run: |
+          prefix="sg200x-uart-loader-${GITHUB_REF_NAME}"
+          git archive --format=tar.gz --prefix="$prefix/" \
+            -o "dist/${prefix}-src.tar.gz" "$GITHUB_REF_NAME"
+          (cd dist && sha256sum "${prefix}-src.tar.gz" >> SHA256SUMS)
+          cat dist/SHA256SUMS
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/sg200x-uart-loader-linux-*
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: dist/*
+          fail_on_unmatched_files: true
+          generate_release_notes: true

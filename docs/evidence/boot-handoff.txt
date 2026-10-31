@@ -1,0 +1,49 @@
+# Row-boot U-Boot 2026.07: 1.5 Mbaud cold-boot hand-off (sanitized)
+
+FIP: 304,640 bytes, sha256 3dfaad354f9cb87922ff1eb6f84a95be8cbd0e81b1532bd027c6a9a6700b9417.
+Loader: --final-baud 1500000. Five cold boots: 5/5 served 304,640/304,640
+bytes, zero BootROM resets, zero CH347 re-authorizations (one run needed one
+extra URDL after a missed magic; no reset).
+
+Prompt, requests, and baud switch:
+
+```
+oz64: waiting for URPL (port /dev/ttyACM0, 115200 8N1)
+B.SCS/0/0.WD.URPL.
+oz64: sent URDL (magic #1, exactly once for this prompt)
+BS/UART.PS.EK/0/4096/UL_START
+oz64: request offset=0 size=4096 (4096 bytes available)
+oz64: sent 4096 bytes at offset 0
+PE.BS.EK/4096/55296/UL_START
+oz64: request offset=4096 size=55296 (55296 bytes available)
+oz64: sent 55296 bytes at offset 4096
+oz64: switched UART to 1500000 baud (final; staying here)
+EK/59392/4096/UL_START
+oz64: request offset=59392 size=4096 (4096 bytes available)
+oz64: sent 4096 bytes at offset 59392
+EK/63488/25088/UL_START
+oz64: request offset=63488 size=25088 (25088 bytes available)
+oz64: sent 25088 bytes at offset 63488
+EK/88576/512/UL_START
+oz64: request offset=88576 size=512 (512 bytes available)
+oz64: sent 512 bytes at offset 88576
+EK/88576/216064/UL_START
+oz64: request offset=88576 size=216064 (216064 bytes available)
+oz64: sent 216064 bytes at offset 88576
+oz64: FIP complete: 304640/304640 bytes served
+```
+
+FSBL hand-off:
+
+```
+L2/0x414d3342/0xcafe0351/0x80200000/0x34c00/0x34c00
+COMP/1.
+DCP/0x80200020/0x1000000/0x81900020/0x34c00/1.
+DCP/0x899a8/0.
+Loader_2nd loaded.
+Jump to monitor at 0x80000000.
+oz64: HANDOFF: FSBL -> BL31/U-Boot; leaving the tty at 1500000 baud and never switching back
+```
+
+The excerpt stops at the hand-off. Current FIPs and the full validation are in
+the evidence notes linked from `README.md`.
