@@ -14,8 +14,6 @@ is the sender.
 - Kermit protocol: <https://kermitproject.org/kproto.pdf>
 - SG200X technical reference manual:
   <https://github.com/sophgo/sophgo-doc/tree/main/SG200X/TRM>
-- WCH CH347-family USB-UART (hardware validation used CH347F):
-  <https://www.wch-ic.com/products/CH347.html>
 - Evidence: [docs/evidence/README.md](docs/evidence/README.md)
 
 ## Boot flow and console
@@ -117,19 +115,17 @@ tty; it only changes the line speed.
 - CV180x uses the same URPL/URDL BootROM family but its vendor FSBL has no
   1.5 Mbaud switch, so the FSBL baud change is not applicable there.
 
-## Pacing, retries, recovery
+## Pacing and retries
 
-These timing and recovery values are fixed constants in v0.3.0:
+These timing and retry values are fixed constants in v0.4.0:
 
 - 2 ms packet pacing at 115200, 0 at the final baud.
 - 150 ms `start-delay` after `UL_START` before Send-Init, and a 150 ms drain of
   stale boot-log bytes.
-- 5 s ACK timeout and 10 packet retries bound per-packet recovery.
+- 5 s ACK timeout and 10 packet retries bound per-packet retransmission.
 - 3 reset retries re-arm the reset gate after a mid-transfer reset.
-- Automatic USB-serial recovery: on an ACK timeout the loader closes the tty,
-  toggles the backing USB device's `authorized` flag 0→1, reopens, and retries
-  once. It was added for a CH347 TX wedge but is not CH347-specific; it fails
-  gracefully on non-USB ttys.
+- An ACK timeout after the fixed retries is an error: the loader reports it and
+  exits.
 
 Only `--wait-timeout` and `--post` remain timing knobs.
 

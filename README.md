@@ -3,9 +3,7 @@
 A Go host loader for the SG200x-family BootROM UART download path, validated on
 the Pine64 Oz64 (SG2000). It serves a CVITEK FIP over the serial console as an
 E-Kermit 1.8 receiver, keeping the port open for every BootROM/FSBL slice
-request. It uses no USB boot/recovery protocol and writes nothing to eMMC or
-SPI. Automatic USB-serial re-authorization is a recovery workaround for a CH347
-TX wedge, not a hardware requirement.
+request. It uses no USB boot protocol and writes nothing to eMMC or SPI.
 
 ## Compatibility
 
@@ -13,13 +11,13 @@ TX wedge, not a hardware requirement.
 - **SG2002 and CV181x:** share the SG200x/CV181x platform and BootROM protocol
   and are expected to work with a matching board FIP, but are not
   hardware-validated here.
-- **CV180x:** **unsupported by v0.3.0.** It uses the same URPL/URDL BootROM
+- **CV180x:** **unsupported by v0.4.0.** It uses the same URPL/URDL BootROM
   family, but its vendor FSBL has no 1.5 Mbaud switch. Use v0.1.0 for CV180x
   experiments.
 - Protocol compatibility is not FIP/board compatibility. Use a matching FIP,
   DDR configuration, UART wiring, and power sequencing.
 
-> **v0.3.0 baud behaviour:** the loader starts at 115200 and switches to
+> **v0.4.0 baud behaviour:** the loader starts at 115200 and switches to
 > **1.5 Mbaud** at the FSBL, then stays there. Vendor U-Boot 2021.10 (115200
 > console) is not supported; v0.2.0 was the last release with `--follow-baud`
 > for that vendor mode.
@@ -37,7 +35,7 @@ can still reach U-Boot/Linux. It is a RAM loader, not a flashing tool.
 - Linux host with Go 1.26.x (no cgo) or a release binary.
 - A Linux tty (e.g. `/dev/ttyACM0` or `/dev/ttyUSB0`) whose driver supports
   115200 and 1,500,000 baud, raw 8N1, no flow control. No VID/PID/driver
-  requirement; hardware validation used a CH347F USB-UART.
+  requirement.
 - Oz64 in ARM/A53 mode (J50) with UART0 wired to the adapter.
 - A complete CVITEK FIP (`CVBL01` at offset 0).
 
@@ -45,12 +43,12 @@ can still reach U-Boot/Linux. It is a RAM loader, not a flashing tool.
 
 ```console
 $ go build -o sg200x-uart-loader .
-$ go build -trimpath -ldflags "-s -w -X main.version=v0.3.0" -o sg200x-uart-loader .
+$ go build -trimpath -ldflags "-s -w -X main.version=v0.4.0" -o sg200x-uart-loader .
 $ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
-    -ldflags "-s -w -X main.version=v0.3.0" \
+    -ldflags "-s -w -X main.version=v0.4.0" \
     -o dist/sg200x-uart-loader-linux-amd64 .
 $ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
-    -ldflags "-s -w -X main.version=v0.3.0" \
+    -ldflags "-s -w -X main.version=v0.4.0" \
     -o dist/sg200x-uart-loader-linux-arm64 .
 $ nix build .#default # optional; result/bin/sg200x-uart-loader
 $ ./sg200x-uart-loader --version
@@ -88,7 +86,7 @@ FSBL and stays there for U-Boot/Linux built with `CONFIG_BAUDRATE=1500000`.
 | `--post` | console capture after the last slice (default `30s`) |
 | `--race` | answer the first `URPL` immediately (valid boot0 race mode) |
 
-Protocol limits and timing/recovery defaults are constants: 115200 start,
+Protocol limits and timing/retry defaults are constants: 115200 start,
 1500000 at the FSBL, 88 data bytes (94-byte packets), checksum type 1, 5 s ACK
 timeout, 10 retries, 3 reset retries, and fixed pacing/drain delays. Only
 `--wait-timeout` and `--post` remain timing knobs.
@@ -106,7 +104,6 @@ defaults. Remove them from scripts:
 | `--data-size` | omit; 88 data bytes / 94-byte packets are fixed |
 | `--ack-timeout`, `--retries`, `--reset-retries` | omit; fixed at 5 s / 10 / 3 |
 | `--packet-delay`, `--packet-delay2`, `--start-delay`, `--drain` | omit; fixed pacing |
-| `--ch347-recover` | omit; automatic USB-serial recovery is built in and attempted on ACK timeouts |
 | `--urpl-delay`, `--urpl-max-wait` | omit, or use `--race` for the old immediate-answer race path |
 
 `--race` answers the first `URPL` immediately. It is equivalent to the v0.1.0
@@ -122,6 +119,12 @@ and the Makefile. No flags were renamed.
 | `--selftest` | `go test ./...` (the same packet, checksum, quoting, and parser cases are unit tests) |
 | `--follow-baud` | omit; the loader always switches to 1.5 Mbaud at the FSBL and stays there. Vendor U-Boot 2021.10 is unsupported; stay on v0.2.0 if you need it. |
 | `Makefile` targets | plain `go build`, `go test ./...`, and `go test -tags=e2e ./internal/romsim` commands |
+
+## Migrating from v0.3.0
+
+v0.4.0 removes the automatic USB device reset on Kermit ACK timeout. No flags
+changed; on an ACK timeout the loader now reports the error and exits after the
+fixed retries instead of reopening the tty and retrying the file.
 
 ## How it boots
 
@@ -151,11 +154,9 @@ and E-Kermit receiver over a PTY. It needs no serial hardware.
 - **Silent U-Boot/Linux after the FSBL:** the loader leaves the console at
   1.5 Mbaud. Build U-Boot/Linux with `CONFIG_BAUDRATE=1500000`. Vendor U-Boot
   2021.10 (115200 console) is unsupported; use v0.2.0 for that mode.
-- **USB-serial TX wedge (observed on CH347):** on ACK timeouts the loader
-  closes the tty, toggles the backing USB device's sysfs `authorized` flag
-  0→1, reopens, and retries. This works on USB-backed ttys and fails
-  gracefully on non-USB ttys or PTYs. Re-plug or re-authorize the USB port
-  manually if needed.
+- **Kermit ACK timeout:** after the fixed retries the loader reports the
+  timeout and exits. Check the wiring and baud rate, power-cycle the board, and
+  retry. If a USB-UART adapter is wedged, re-seat or re-plug it.
 - **Failed run:** nothing is written to storage. Power-cycle and retry.
 
 ## Status
@@ -169,8 +170,6 @@ tests and cross-builds.
 - Project: <https://github.com/tomfitzhenry/sg200x-uart-loader>
 - E-Kermit 1.8: <https://github.com/KermitProject/ekermit>
 - Kermit protocol: <https://kermitproject.org/kproto.pdf>
-- WCH CH347-family USB-UART (hardware validation used CH347F):
-  <https://www.wch-ic.com/products/CH347.html>
 - Pine64 Oz64: <https://wiki.pine64.org/wiki/Oz64>
 - Evidence: [docs/evidence/README.md](docs/evidence/README.md)
 

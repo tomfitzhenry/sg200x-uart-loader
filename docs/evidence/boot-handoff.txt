@@ -5,9 +5,8 @@ row-boot 1.5 Mbaud final is now the default.
 
 FIP: 304,640 bytes, sha256 3dfaad354f9cb87922ff1eb6f84a95be8cbd0e81b1532bd027c6a9a6700b9417.
 Loader: default row-boot final mode (v0.1.0: `--final-baud 1500000`). Five cold
-boots: 5/5 served 304,640/304,640 bytes, zero BootROM resets, zero CH347F
-re-authorizations (one run needed one extra URDL after a missed magic; no
-reset).
+boots: 5/5 served 304,640/304,640 bytes, zero BootROM resets (one run needed
+one extra URDL after a missed magic; no reset).
 
 Prompt, requests, and baud switch:
 
