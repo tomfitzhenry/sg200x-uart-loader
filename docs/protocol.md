@@ -14,7 +14,8 @@ is the sender.
 - Kermit protocol: <https://kermitproject.org/kproto.pdf>
 - SG200X technical reference manual:
   <https://github.com/sophgo/sophgo-doc/tree/main/SG200X/TRM>
-- CH347 USB-UART: <https://www.wch-ic.com/products/CH347.html>
+- WCH CH347-family USB-UART (hardware validation used CH347F):
+  <https://www.wch-ic.com/products/CH347.html>
 - Lab bring-up: <https://github.com/tomfitzhenry/labgrid/blob/master/docs/oz64-bringup.md>
 
 ## Boot flow and console
@@ -125,8 +126,10 @@ These timing and recovery values are fixed constants in v0.3.0:
   stale boot-log bytes.
 - 5 s ACK timeout and 10 packet retries bound per-packet recovery.
 - 3 reset retries re-arm the reset gate after a mid-transfer reset.
-- CH347 recovery is always on: on ACK timeouts the loader re-authorizes the USB
-  device and reopens the tty, avoiding a manual unplug.
+- Automatic USB-serial recovery: on an ACK timeout the loader closes the tty,
+  toggles the backing USB device's `authorized` flag 0→1, reopens, and retries
+  once. It was added for a CH347 TX wedge but is not CH347-specific; it fails
+  gracefully on non-USB ttys.
 
 Only `--wait-timeout` and `--post` remain timing knobs.
 
