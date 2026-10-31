@@ -108,17 +108,17 @@ The ROM and BL2 run at 115200 8N1. At the FSBL the peer switches its console to
 1,500,000 and continues the same request protocol. The loader never closes the
 tty; it only changes the line speed.
 
-- The default switches to 1500000 at the FSBL and stays there. This is
-  row-boot U-Boot/Linux built with `CONFIG_BAUDRATE=1500000`.
-- `--follow-baud` switches to 1500000 at the FSBL and back to 115200 at
-  hand-off. This is legacy vendor-U-Boot-2021.10 behaviour. Switching back can
-  wedge the CH347 TX path, so do not use it with row-boot 2026.07.
+- The loader switches to 1500000 at the FSBL and stays there. This is row-boot
+  U-Boot/Linux built with `CONFIG_BAUDRATE=1500000`.
+- Vendor U-Boot 2021.10 (115200 console) is unsupported as of v0.3.0. v0.2.0
+  was the last release with `--follow-baud`, which switched back to 115200 at
+  hand-off. That historical mode is not a current command.
 - CV180x uses the same URPL/URDL BootROM family but its vendor FSBL has no
   1.5 Mbaud switch, so the FSBL baud change is not applicable there.
 
 ## Pacing, retries, recovery
 
-These timing and recovery values are fixed constants in v0.2.0:
+These timing and recovery values are fixed constants in v0.3.0:
 
 - 2 ms packet pacing at 115200, 0 at the final baud.
 - 150 ms `start-delay` after `UL_START` before Send-Init, and a 150 ms drain of
@@ -141,4 +141,10 @@ paths. Multi-thousand-line vendor logs are not published.
 
 The end-to-end test double lives in `internal/romsim`: it simulates the
 SG200x-family BootROM and an E-Kermit receiver over a PTY. It exercises the
-sender, request parser, framing, and ACK path without hardware.
+sender, request parser, framing, and ACK path without hardware. Run it and the
+unit tests with plain Go:
+
+```console
+$ go test ./...
+$ go test -tags=e2e ./internal/romsim -count=1
+```
