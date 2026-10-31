@@ -4,7 +4,7 @@ A Go host loader for the SG200x-family BootROM UART download path, validated on
 the Pine64 Oz64 (SG2000). It serves a CVITEK FIP over the serial console as an
 E-Kermit 1.8 receiver, keeping the port open for every BootROM/FSBL slice
 request. It uses no USB boot/recovery protocol and writes nothing to eMMC or
-SPI; `--ch347-recover` only re-authorizes the host-side CH347 USB-UART.
+SPI; CH347 USB-UART recovery is automatic.
 
 ## Compatibility
 
@@ -13,8 +13,7 @@ SPI; `--ch347-recover` only re-authorizes the host-side CH347 USB-UART.
   and are expected to work with a matching board FIP, but are not
   hardware-validated here.
 - **CV180x:** untested. It uses the same URPL/URDL BootROM family, but the
-  vendor FSBL has no 1.5 Mbaud switch, so do not assume
-  `--final-baud 1500000`.
+  vendor FSBL has no 1.5 Mbaud switch, so do not assume the FSBL baud change.
 - Protocol compatibility is not FIP/board compatibility. Use a matching FIP,
   DDR configuration, UART wiring, and power sequencing.
 
@@ -51,38 +50,55 @@ off for at least 5 s):
 ```console
 $ ./sg200x-uart-loader \
     --port /dev/ttyACM0 --fip <fip> \
-    --final-baud 1500000 --post 60s --log <log>
+    --post 60s --log <log>
 ```
 
-`--final-baud 1500000` follows the FSBL to 1.5 Mbaud and never switches back;
-use it for row-boot U-Boot/Linux built with `CONFIG_BAUDRATE=1500000`.
+The default is row-boot U-Boot 2026.07: the loader switches to 1.5 Mbaud at the
+FSBL and stays there for U-Boot/Linux built with `CONFIG_BAUDRATE=1500000`.
+
+For vendor U-Boot 2021.10 (115200 console), add `--follow-baud`; that switches
+back to 115200 at hand-off.
 
 ## Options
 
-| Primary | Meaning |
+| Flag | Meaning |
 | --- | --- |
 | `--port` | serial device (default `/dev/ttyACM0`) |
 | `--fip` | CVITEK FIP to serve (required) |
-| `--final-baud` | switch to this baud at the FSBL and stay there (e.g. `1500000`; `--stay-baud` is an alias) |
-| `--post` | console capture after the last slice (default `30s`) |
 | `--log` | timestamped RX/TX and protocol log |
-
-| Advanced / legacy | Meaning |
-| --- | --- |
-| `--baud` | initial BootROM baud (default `115200`) |
-| `--baud2` | FSBL baud for `--follow-baud` (default `1500000`) |
-| `--follow-baud` | legacy vendor mode: switch to `--baud2` then back; vendor 115200 FIP only |
-| `--wait-timeout` | maximum wait for `URPL`/first request (default `180s`) |
-| `--packet-delay`, `--packet-delay2` | pacing after each ACK, initial/final baud (default `2ms`/`0`) |
-| `--start-delay`, `--drain` | delay after `UL_START` / drain boot log (default `150ms` each) |
-| `--urpl-delay`, `--urpl-max-wait` | extra delay after a settled prompt / answer without a reset marker (default `100ms`/`4s`) |
-| `--ack-timeout`, `--retries`, `--reset-retries` | Kermit ACK timeout, packet retries, mid-transfer reset retries (default `5s`/`10`/`3`) |
-| `--data-size` | max data bytes per packet, 16..88 (default `88`) |
-| `--checksum` | `1` = 6-bit sum (default), `3` = CRC-16 (ROM NAKs it) |
-| `--ch347-recover` | re-authorize/reopen the CH347 on ACK timeouts (default `true`) |
+| `--verbose` | extra protocol detail |
+| `--dry-run` | validate inputs and print the plan without opening the port |
+| `--selftest` | run built-in packet/parser checks and exit |
+| `--version` | print the version and exit |
 | `--power-cmd` | command run before waiting for `URPL` |
-| `--dry-run`, `--verbose` | validate inputs and print the plan without serial / extra protocol detail |
-| `--selftest` / `--version` | run built-in checks / print version |
+| `--follow-baud` | vendor U-Boot 2021.10: switch back to 115200 at hand-off |
+| `--wait-timeout` | maximum wait for `URPL`/first request (default `180s`) |
+| `--post` | console capture after the last slice (default `30s`) |
+| `--race` | answer the first `URPL` immediately (valid boot0 race mode) |
+
+Protocol limits and timing/recovery defaults are constants: 115200 start,
+1500000 at the FSBL, 88 data bytes (94-byte packets), checksum type 1, 5 s ACK
+timeout, 10 retries, 3 reset retries, and fixed pacing/drain delays. Only
+`--wait-timeout` and `--post` remain timing knobs.
+
+## Migrating from v0.1.0
+
+v0.2.0 removes flags that described fixed protocol invariants or validated
+defaults. Remove them from scripts:
+
+| Removed in v0.2.0 | Replacement |
+| --- | --- |
+| `--baud` | omit; the BootROM/BL2 rate is always 115200 |
+| `--baud2`, `--final-baud`, `--stay-baud` | omit; the default switches to 1500000 and stays |
+| `--checksum` | omit; checksum type 1 is fixed |
+| `--data-size` | omit; 88 data bytes / 94-byte packets are fixed |
+| `--ack-timeout`, `--retries`, `--reset-retries` | omit; fixed at 5 s / 10 / 3 |
+| `--packet-delay`, `--packet-delay2`, `--start-delay`, `--drain` | omit; fixed pacing |
+| `--ch347-recover` | omit; CH347 recovery is always on |
+| `--urpl-delay`, `--urpl-max-wait` | omit, or use `--race` for the old immediate-answer race path |
+
+`--race` answers the first `URPL` immediately. It is equivalent to the v0.1.0
+race incantation `--urpl-delay 1ns --urpl-max-wait 1ns`.
 
 ## How it boots
 
@@ -104,15 +120,16 @@ and E-Kermit receiver over a PTY. It needs no serial hardware.
 
 ## Troubleshooting
 
-- **Early `URPL` then reset:** answer only after `E:Boot failed` /
+- **Early `URPL` then reset:** the loader waits for `E:Boot failed` /
   `E:RESET:plat/mars`. Answering the early prompt races the ~2.5 s eMMC reset.
 - **Valid boot0, no `URPL`:** the ROM may boot eMMC directly. Retry the race
-  path with `--wait-timeout 90s --urpl-max-wait 1ns --urpl-delay 1ns`.
-- **Silent U-Boot/Linux after the FSBL:** use `--final-baud 1500000` for a
-  1.5 M console. For the vendor U-Boot 2021.10 (115200), use `--follow-baud`;
-  switching back can wedge the CH347.
-- **CH347 TX wedges:** `--ch347-recover` (default) re-authorizes and reopens
-  the device; re-plug or re-authorize the USB port if needed.
+  path with `--wait-timeout 90s --race`.
+- **Silent U-Boot/Linux after the FSBL:** the default is a 1.5 M console. For
+  the vendor U-Boot 2021.10 (115200), use `--follow-baud`; switching back can
+  wedge the CH347.
+- **CH347 TX wedges:** recovery is automatic; the loader re-authorizes and
+  reopens the device on ACK timeouts. Re-plug or re-authorize the USB port if
+  needed.
 - **Failed run:** nothing is written to storage. Power-cycle and retry.
 
 ## Status
