@@ -338,8 +338,7 @@ func (s *Simulator) Serve(ctx context.Context, master *os.File) error {
 		}
 	}
 
-	// The FSBL hands off after its last slice; a follow-baud loader switches
-	// back to 115200 here, before the U-Boot console text.
+	// The FSBL hands off after its last slice, before the U-Boot console text.
 	if s.cfg.BaudSwitchMarker {
 		if _, err := c.write([]byte(handoffText)); err != nil {
 			return err

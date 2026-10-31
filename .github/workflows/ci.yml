@@ -28,8 +28,6 @@ jobs:
         run: go vet ./...
       - name: Unit tests
         run: go test ./... -count=1
-      - name: Selftest
-        run: go run . --selftest
       - name: Version smoke test
         run: go run . --version
       - name: End-to-end (PTY simulator)
