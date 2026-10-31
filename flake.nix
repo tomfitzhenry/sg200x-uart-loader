@@ -15,7 +15,7 @@
       });
 
       packages = forAll (pkgs:
-        let version = "0.3.0";
+        let version = "0.4.0";
         in {
           default = pkgs.buildGoModule {
             pname = "sg200x-uart-loader";

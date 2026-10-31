@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"sort"
 	"sync"
@@ -435,45 +434,6 @@ func isBootROMReset(b []byte) bool {
 		bytes.Contains(b, []byte("RESET:plat/mars"))
 }
 
-// recoverCH347 clears a wedged CH347 TX path by de-authorizing and
-// re-authorizing its USB device, then reopening the tty at the current baud.
-// The Oz64 keeps running; only the host-side USB link is reset.
-func (l *Loader) recoverCH347(st *state) error {
-	l.log.Progress("CH347 recovery: closing %s and re-authorizing the USB device", l.opts.Port)
-	l.port.Close()
-	select {
-	case <-l.done:
-	case <-time.After(2 * time.Second):
-	}
-	if err := serial.Reauthorize(l.opts.Port); err != nil {
-		return err
-	}
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		if _, err := os.Stat(l.opts.Port); err == nil {
-			break
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("%s did not reappear after USB re-authorize", l.opts.Port)
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	time.Sleep(500 * time.Millisecond)
-	p, err := serial.Open(l.opts.Port, l.currentBaud)
-	if err != nil {
-		return err
-	}
-	l.port = p
-	l.parser.SetChecksumType(KermitChecksum)
-	l.events = make(chan Event, 4096)
-	l.done = make(chan struct{})
-	l.readErr = nil
-	go l.reader()
-	l.drain(st, 200*time.Millisecond)
-	l.log.Progress("CH347 recovery: reopened %s at %d baud", l.opts.Port, l.currentBaud)
-	return nil
-}
-
 func (l *Loader) setBaud(baud int) error {
 	if err := l.port.SetBaud(baud); err != nil {
 		return err
@@ -559,20 +519,12 @@ func (l *Loader) transfer(req rom.Request, st *state) error {
 	l.log.Progress("request offset=%d size=%d (%d bytes available)", req.Offset, req.Size, len(data))
 
 	// The ROM finished printing UL_START; give it time to switch from its
-	// prompt routine into the E-Kermit receiver and flush any boot-log bytes
-	// that are still queued in the CH347 before the Send-Init.
+	// prompt routine into the E-Kermit receiver and flush any queued boot-log
+	// bytes before the Send-Init.
 	time.Sleep(StartDelay)
 	l.drain(st, Drain)
 
 	err := l.attemptFile(req, data, st)
-	if err != nil && !errors.Is(err, errBoardReset) && errors.Is(err, errACKTimeout) {
-		l.log.Progress("no Kermit ACK for offset=%d; assuming CH347 TX wedge, re-authorizing USB and retrying once", req.Offset)
-		if rerr := l.recoverCH347(st); rerr != nil {
-			l.log.Progress("CH347 recovery failed: %v", rerr)
-		} else {
-			err = l.attemptFile(req, data, st)
-		}
-	}
 	if err != nil {
 		l.log.Progress("ERROR sending offset=%d size=%d: %v", req.Offset, req.Size, err)
 		return err
