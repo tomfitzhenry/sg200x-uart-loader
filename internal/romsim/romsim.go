@@ -37,6 +37,10 @@ type Config struct {
 	// EarlyPromptWait is the quiet window used to detect an early magic.
 	// Defaults to 150ms.
 	EarlyPromptWait time.Duration
+	// Race emits only the early boot banner/prompt, with no eMMC reset
+	// marker, simulating a valid boot0 where the loader answers the first
+	// URPL immediately (--race).  It is mutually exclusive with EarlyPrompt.
+	Race bool
 	// ResetAfterDataPackets injects B.SCS/0/0.WD.URPL\r\n after this many
 	// data packets in the first slice, stops ACKing, and re-arms.  Zero
 	// disables the reset.
@@ -203,9 +207,10 @@ const resetBanner = "\r\n E:Boot failed (8).\r\n" +
 
 const resetText = "B.SCS/0/0.WD.URPL.\r\n"
 
-const baudMarkerText = "\r\nLoader_2nd loaded.\r\n" +
-	"Jump to monitor at 0x80000000.\r\n" +
-	"UART: 1500000 baud\r\n"
+const baudNoticeText = "\r\nUART: 1500000 baud\r\n"
+
+const handoffText = "\r\nLoader_2nd loaded.\r\n" +
+	"Jump to monitor at 0x80000000.\r\n"
 
 const defaultFinalText = "\r\nU-Boot 2026.07-rc3 (Oct 27 2025 - 00:00:00 +0000)\r\n" +
 	"Loading Linux from UART...\r\n" +
@@ -263,24 +268,34 @@ func (s *Simulator) Serve(ctx context.Context, master *os.File) error {
 	if _, err := c.write([]byte(earlyBanner)); err != nil {
 		return err
 	}
-	if s.cfg.EarlyPrompt {
-		ok, err := c.scanURDL(ctx, s.cfg.EarlyPromptWait)
+	if s.cfg.Race {
+		ok, err := c.scanURDL(ctx, s.cfg.AckTimeout)
 		if err != nil && !errors.Is(err, errTimeout) && !errors.Is(err, context.DeadlineExceeded) {
 			return err
 		}
-		s.setEarlyMagic(ok)
-	}
+		if !ok {
+			return fmt.Errorf("timed out waiting for URDL after the race prompt")
+		}
+	} else {
+		if s.cfg.EarlyPrompt {
+			ok, err := c.scanURDL(ctx, s.cfg.EarlyPromptWait)
+			if err != nil && !errors.Is(err, errTimeout) && !errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			s.setEarlyMagic(ok)
+		}
 
-	if _, err := c.write([]byte(resetBanner)); err != nil {
-		return err
-	}
+		if _, err := c.write([]byte(resetBanner)); err != nil {
+			return err
+		}
 
-	ok, err := c.scanURDL(ctx, s.cfg.AckTimeout)
-	if err != nil && !errors.Is(err, errTimeout) && !errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
-	if !ok {
-		return fmt.Errorf("timed out waiting for URDL after the boot prompt")
+		ok, err := c.scanURDL(ctx, s.cfg.AckTimeout)
+		if err != nil && !errors.Is(err, errTimeout) && !errors.Is(err, context.DeadlineExceeded) {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("timed out waiting for URDL after the boot prompt")
+		}
 	}
 
 	if s.cfg.InvalidRequest {
@@ -310,7 +325,7 @@ func (s *Simulator) Serve(ctx context.Context, master *os.File) error {
 			}
 		}
 		if req.Offset == 0x1000 && s.cfg.BaudSwitchMarker {
-			if _, err := c.write([]byte(baudMarkerText)); err != nil {
+			if _, err := c.write([]byte(baudNoticeText)); err != nil {
 				return err
 			}
 			if s.cfg.Slave != nil {
@@ -323,6 +338,13 @@ func (s *Simulator) Serve(ctx context.Context, master *os.File) error {
 		}
 	}
 
+	// The FSBL hands off after its last slice; a follow-baud loader switches
+	// back to 115200 here, before the U-Boot console text.
+	if s.cfg.BaudSwitchMarker {
+		if _, err := c.write([]byte(handoffText)); err != nil {
+			return err
+		}
+	}
 	if _, err := c.write([]byte(s.cfg.FinalText)); err != nil {
 		return err
 	}
