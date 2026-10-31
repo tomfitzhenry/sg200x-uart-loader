@@ -122,9 +122,9 @@ and the Makefile. No flags were renamed.
 
 ## Migrating from v0.3.0
 
-v0.4.0 removes the automatic USB device reset on Kermit ACK timeout. No flags
-changed; on an ACK timeout the loader now reports the error and exits after the
-fixed retries instead of reopening the tty and retrying the file.
+v0.4.0 removes automatic USB-serial recovery on Kermit ACK timeout. No flags
+changed; after the fixed retries an ACK timeout is now reported as an error and
+the loader exits, instead of reopening the tty and retrying the file.
 
 ## How it boots
 
