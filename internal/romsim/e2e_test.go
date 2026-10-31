@@ -275,40 +275,6 @@ func TestLoaderAgainstSimulatedROM(t *testing.T) {
 		t.Logf("normal scenario completed in %s", sc.elapsed)
 	})
 
-	t.Run("vendor-follow-baud", func(t *testing.T) {
-		// Stop at the simulated hand-off: the vendor FSBL hands off once it
-		// has served its slices, so no further requests arrive at 115200.
-		followFIP := testFIP(8192)
-		followPath := filepath.Join(t.TempDir(), "fip.bin")
-		if err := os.WriteFile(followPath, followFIP, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		sc := runScenarioArgs(t, followPath, followFIP, romsim.Config{
-			EarlyPrompt:      true,
-			BaudSwitchMarker: true,
-		}, "--follow-baud")
-		if sc.serveErr != nil {
-			t.Fatalf("simulator: %v\nloader stderr:\n%s\nloader log:\n%s", sc.serveErr, sc.stderr, sc.log)
-		}
-		if sc.exitCode != 0 {
-			t.Fatalf("loader exit %d\nstdout:\n%s\nstderr:\n%s\nlog:\n%s", sc.exitCode, sc.stdout, sc.stderr, sc.log)
-		}
-		if sc.sim.MagicCount != 1 {
-			t.Fatalf("URDL count = %d, want 1", sc.sim.MagicCount)
-		}
-		checkSlices(t, sc.sim.Slices, followFIP, []romsim.Slice{
-			{Offset: 0, Size: 4096},
-			{Offset: 4096, Size: 4096},
-		})
-		if !strings.Contains(sc.log, "switched UART back to 115200 baud") {
-			t.Fatalf("loader log is missing the hand-off switch back\nlog:\n%s", sc.log)
-		}
-		if !strings.Contains(sc.log, "FIP complete: 8192/8192 bytes served") {
-			t.Fatalf("loader log is missing the completion line\nlog:\n%s", sc.log)
-		}
-		t.Logf("follow-baud scenario completed in %s", sc.elapsed)
-	})
-
 	t.Run("race-valid-boot0", func(t *testing.T) {
 		sc := runScenarioArgs(t, fipPath, fip, romsim.Config{
 			Race:             true,

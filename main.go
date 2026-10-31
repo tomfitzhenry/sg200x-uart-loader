@@ -23,25 +23,14 @@ func main() {
 		powerCmd    = flag.String("power-cmd", "", "shell command to run before waiting for URPL")
 		verbose     = flag.Bool("verbose", false, "verbose protocol logging")
 		dryRun      = flag.Bool("dry-run", false, "validate inputs and print the plan; do not open the port")
-		selfTest    = flag.Bool("selftest", false, "run built-in packet/parser tests and exit")
 		waitTimeout = flag.Duration("wait-timeout", 180*time.Second, "how long to wait for URPL/EK")
 		post        = flag.Duration("post", 30*time.Second, "console capture time after the last FIP slice")
-		followBaud  = flag.Bool("follow-baud", false, "vendor U-Boot 2021.10: switch back to 115200 at hand-off")
 		race        = flag.Bool("race", false, "answer the first URPL immediately (valid boot0 race mode)")
 	)
 	flag.Parse()
 
 	if *showVersion {
 		fmt.Printf("sg200x-uart-loader %s\n", version)
-		return
-	}
-
-	if *selfTest {
-		if err := loader.SelfTest(); err != nil {
-			fmt.Fprintf(os.Stderr, "selftest FAIL: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Println("selftest PASS: packet encoding/checksum/quoting, ACK decoding, ROM request parsing")
 		return
 	}
 
@@ -65,13 +54,8 @@ func main() {
 		p.CHKT = loader.KermitChecksum
 		s, _ := kermit.EncodePacket(0, 'S', kermit.EncodeParams(p), p)
 		fmt.Printf("dry-run: fip=%s size=%d sha256=%s\n", *fipPath, len(fip), hex.EncodeToString(sum[:]))
-		if *followBaud {
-			fmt.Printf("dry-run: port=%s baud=%d fsbl=%d handoff=%d wait=%s post=%s data=%d checksum=%c mode=follow\n",
-				*port, loader.BootROMBaud, loader.FSBLBaud, loader.BootROMBaud, *waitTimeout, *post, loader.DataSize, loader.KermitChecksum)
-		} else {
-			fmt.Printf("dry-run: port=%s baud=%d fsbl=%d wait=%s post=%s data=%d checksum=%c mode=final\n",
-				*port, loader.BootROMBaud, loader.FSBLBaud, *waitTimeout, *post, loader.DataSize, loader.KermitChecksum)
-		}
+		fmt.Printf("dry-run: port=%s baud=%d fsbl=%d wait=%s post=%s data=%d checksum=%c\n",
+			*port, loader.BootROMBaud, loader.FSBLBaud, *waitTimeout, *post, loader.DataSize, loader.KermitChecksum)
 		fmt.Printf("dry-run: send-init=%x\n", s)
 		fmt.Printf("dry-run: first slice 0/4096 would be %d data packets at %d bytes\n",
 			(4096+loader.DataSize-1)/loader.DataSize, loader.DataSize)
@@ -96,7 +80,6 @@ func main() {
 		PowerCmd:    *powerCmd,
 		WaitTimeout: *waitTimeout,
 		Post:        *post,
-		FollowBaud:  *followBaud,
 		Race:        *race,
 	})
 	if err := l.Run(); err != nil {

@@ -10,12 +10,12 @@
     in {
       devShells = forAll (pkgs: {
         default = pkgs.mkShell {
-          packages = with pkgs; [ go gcc gnumake socat git python3 ];
+          packages = with pkgs; [ go gcc socat git python3 ];
         };
       });
 
       packages = forAll (pkgs:
-        let version = "0.2.0";
+        let version = "0.3.0";
         in {
           default = pkgs.buildGoModule {
             pname = "sg200x-uart-loader";

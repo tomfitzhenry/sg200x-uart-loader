@@ -45,7 +45,6 @@ type Options struct {
 	PowerCmd    string
 	WaitTimeout time.Duration
 	Post        time.Duration
-	FollowBaud  bool
 	Race        bool
 }
 
@@ -130,13 +129,8 @@ func (l *Loader) Run() error {
 		return err
 	}
 
-	if l.opts.FollowBaud {
-		l.log.Progress("mode: vendor follow baud (start %d, FSBL %d, then back to %d at hand-off)",
-			BootROMBaud, FSBLBaud, BootROMBaud)
-	} else {
-		l.log.Progress("mode: row-boot final baud %d (start %d); the UART will NOT switch back for U-Boot/Linux",
-			FSBLBaud, BootROMBaud)
-	}
+	l.log.Progress("mode: final baud %d (start %d); the UART will NOT switch back for U-Boot/Linux",
+		FSBLBaud, BootROMBaud)
 	l.log.Progress("waiting for URPL (port %s, %d 8N1)", l.opts.Port, BootROMBaud)
 	st := &state{}
 	start := time.Now()
@@ -431,17 +425,7 @@ func (l *Loader) observeText(b []byte, st *state) {
 		bytes.Contains(st.roll, []byte("Loader_2nd loaded"))
 	if handoff && !st.handoffLogged {
 		st.handoffLogged = true
-		if l.opts.FollowBaud {
-			l.log.Progress("HANDOFF: FSBL -> BL31/U-Boot; switching back to %d baud", BootROMBaud)
-		} else {
-			l.log.Progress("HANDOFF: FSBL -> BL31/U-Boot; leaving the tty at %d baud and never switching back", l.currentBaud)
-		}
-	}
-	if l.opts.FollowBaud && st.baudSwitches == 1 && handoff {
-		// The FSBL hands off to BL31/U-Boot, whose console is normally back
-		// at the original baud.  Switch at the first hand-off marker so the
-		// first U-Boot output is not lost.
-		l.switchBaud(st, BootROMBaud)
+		l.log.Progress("HANDOFF: FSBL -> BL31/U-Boot; leaving the tty at %d baud and never switching back", l.currentBaud)
 	}
 }
 
@@ -504,14 +488,7 @@ func (l *Loader) switchBaud(st *state, baud int) {
 		l.log.Progress("ERROR switching to %d baud: %v", baud, err)
 		return
 	}
-	switch {
-	case baud == BootROMBaud:
-		l.log.Progress("switched UART back to %d baud for the U-Boot hand-off", baud)
-	case l.opts.FollowBaud:
-		l.log.Progress("switched UART to %d baud (following FSBL/U-Boot)", baud)
-	default:
-		l.log.Progress("switched UART to %d baud (final; staying here)", baud)
-	}
+	l.log.Progress("switched UART to %d baud (final; staying here)", baud)
 }
 
 func (l *Loader) parseRequests(b []byte, st *state) {

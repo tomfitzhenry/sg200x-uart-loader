@@ -12,15 +12,16 @@ SPI; CH347 USB-UART recovery is automatic.
 - **SG2002 and CV181x:** share the SG200x/CV181x platform and BootROM protocol
   and are expected to work with a matching board FIP, but are not
   hardware-validated here.
-- **CV180x:** **unsupported by v0.2.0.** It uses the same URPL/URDL BootROM
+- **CV180x:** **unsupported by v0.3.0.** It uses the same URPL/URDL BootROM
   family, but its vendor FSBL has no 1.5 Mbaud switch. Use v0.1.0 for CV180x
   experiments.
 - Protocol compatibility is not FIP/board compatibility. Use a matching FIP,
   DDR configuration, UART wiring, and power sequencing.
 
-> **v0.2.0 baud assumption:** v0.2.0 assumes the FSBL switches to **1.5 Mbaud**
-> and has **no 115200-stay mode**. It always moves to 1.5 Mbaud at the FSBL;
-> `--follow-baud` only selects whether to switch back to 115200 at hand-off.
+> **v0.3.0 baud behaviour:** the loader starts at 115200 and switches to
+> **1.5 Mbaud** at the FSBL, then stays there. Vendor U-Boot 2021.10 (115200
+> console) is not supported; v0.2.0 was the last release with `--follow-baud`
+> for that vendor mode.
 
 ## Why
 
@@ -41,11 +42,19 @@ can still reach U-Boot/Linux. It is a RAM loader, not a flashing tool.
 
 ```console
 $ go build -o sg200x-uart-loader .
-$ make amd64          # dist/sg200x-uart-loader-linux-amd64
-$ make arm64          # dist/sg200x-uart-loader-linux-arm64
-$ nix build .#default # result/bin/sg200x-uart-loader
+$ go build -trimpath -ldflags "-s -w -X main.version=v0.3.0" -o sg200x-uart-loader .
+$ CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath \
+    -ldflags "-s -w -X main.version=v0.3.0" \
+    -o dist/sg200x-uart-loader-linux-amd64 .
+$ CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath \
+    -ldflags "-s -w -X main.version=v0.3.0" \
+    -o dist/sg200x-uart-loader-linux-arm64 .
+$ nix build .#default # optional; result/bin/sg200x-uart-loader
 $ ./sg200x-uart-loader --version
 ```
+
+`flake.nix` and `flake.lock` are an optional Nix build and dev shell; plain Go
+needs no Makefile.
 
 ## Run
 
@@ -61,9 +70,6 @@ $ ./sg200x-uart-loader \
 The default is row-boot U-Boot 2026.07: the loader switches to 1.5 Mbaud at the
 FSBL and stays there for U-Boot/Linux built with `CONFIG_BAUDRATE=1500000`.
 
-For vendor U-Boot 2021.10 (115200 console), add `--follow-baud`; that switches
-back to 115200 at hand-off.
-
 ## Options
 
 | Flag | Meaning |
@@ -73,10 +79,8 @@ back to 115200 at hand-off.
 | `--log` | timestamped RX/TX and protocol log |
 | `--verbose` | extra protocol detail |
 | `--dry-run` | validate inputs and print the plan without opening the port |
-| `--selftest` | run built-in packet/parser checks and exit |
 | `--version` | print the version and exit |
 | `--power-cmd` | command run before waiting for `URPL` |
-| `--follow-baud` | vendor U-Boot 2021.10: switch back to 115200 at hand-off |
 | `--wait-timeout` | maximum wait for `URPL`/first request (default `180s`) |
 | `--post` | console capture after the last slice (default `30s`) |
 | `--race` | answer the first `URPL` immediately (valid boot0 race mode) |
@@ -105,6 +109,17 @@ defaults. Remove them from scripts:
 `--race` answers the first `URPL` immediately. It is equivalent to the v0.1.0
 race incantation `--urpl-delay 1ns --urpl-max-wait 1ns`.
 
+## Migrating from v0.2.0
+
+v0.3.0 is a breaking CLI change that removes diagnostics, the vendor baud mode,
+and the Makefile. No flags were renamed.
+
+| Removed in v0.3.0 | Replacement |
+| --- | --- |
+| `--selftest` | `go test ./...` (the same packet, checksum, quoting, and parser cases are unit tests) |
+| `--follow-baud` | omit; the loader always switches to 1.5 Mbaud at the FSBL and stays there. Vendor U-Boot 2021.10 is unsupported; stay on v0.2.0 if you need it. |
+| `Makefile` targets | plain `go build`, `go test ./...`, and `go test -tags=e2e ./internal/romsim` commands |
+
 ## How it boots
 
 The ROM/BL2 run at 115200; the vendor FSBL then moves its console to
@@ -116,8 +131,9 @@ framing, reset-marker gate, and baud switch.
 
 ```console
 $ go test ./...
-$ go run . --selftest
-$ go test -tags=e2e ./internal/romsim -count=1   # or: make e2e
+$ go test -tags=e2e ./internal/romsim -count=1
+$ go test -race -tags=e2e ./internal/romsim -count=1
+$ E2E_RACE=1 go test -race -tags=e2e ./internal/romsim -count=1
 ```
 
 The end-to-end test runs `internal/romsim`, a simulated SG200x-family BootROM
@@ -129,9 +145,9 @@ and E-Kermit receiver over a PTY. It needs no serial hardware.
   `E:RESET:plat/mars`. Answering the early prompt races the ~2.5 s eMMC reset.
 - **Valid boot0, no `URPL`:** the ROM may boot eMMC directly. Retry the race
   path with `--wait-timeout 90s --race`.
-- **Silent U-Boot/Linux after the FSBL:** the default is a 1.5 M console. For
-  the vendor U-Boot 2021.10 (115200), use `--follow-baud`; switching back can
-  wedge the CH347.
+- **Silent U-Boot/Linux after the FSBL:** the loader leaves the console at
+  1.5 Mbaud. Build U-Boot/Linux with `CONFIG_BAUDRATE=1500000`. Vendor U-Boot
+  2021.10 (115200 console) is unsupported; use v0.2.0 for that mode.
 - **CH347 TX wedges:** recovery is automatic; the loader re-authorizes and
   reopens the device on ACK timeouts. Re-plug or re-authorize the USB port if
   needed.
