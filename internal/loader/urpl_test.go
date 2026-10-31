@@ -11,7 +11,7 @@ func testLoader(t *testing.T) *Loader {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Loader{opts: Options{URPLDelay: 0}, log: log}
+	return New(Options{Log: log})
 }
 
 func TestObserveURPLDoesNotAnswerEarly(t *testing.T) {

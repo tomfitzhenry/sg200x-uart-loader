@@ -14,30 +14,39 @@ import (
 	"github.com/tomfitzhenry/sg200x-uart-loader/internal/serial"
 )
 
+// Fixed protocol and timing values.  These were CLI flags in v0.1.0 but are
+// invariants of the SG200x BootROM/E-Kermit path, so v0.2.0 makes them
+// constants.
+const (
+	BootROMBaud    = 115200
+	FSBLBaud       = 1500000
+	DataSize       = 88
+	KermitChecksum = '1'
+
+	AckTimeout   = 5 * time.Second
+	Retries      = 10
+	ResetRetries = 3
+
+	PacketDelay  = 2 * time.Millisecond
+	PacketDelay2 = 0
+
+	URPLDelay   = 100 * time.Millisecond
+	URPLMaxWait = 4 * time.Second
+
+	StartDelay = 150 * time.Millisecond
+	Drain      = 150 * time.Millisecond
+)
+
 type Options struct {
-	Port         string
-	Baud         int
-	FIP          []byte
-	Log          *Logger
-	Verbose      bool
-	PowerCmd     string
-	AckTimeout   time.Duration
-	Retries      int
-	WaitTimeout  time.Duration
-	Post         time.Duration
-	FollowBaud   bool
-	Baud2        int
-	FinalBaud    int
-	ResetRetries int
-	PacketDelay  time.Duration
-	PacketDelay2 time.Duration
-	DataSize     int
-	Checksum     byte
-	URPLDelay    time.Duration
-	URPLMaxWait  time.Duration
-	StartDelay   time.Duration
-	Drain        time.Duration
-	CH347Recover bool
+	Port        string
+	FIP         []byte
+	Log         *Logger
+	Verbose     bool
+	PowerCmd    string
+	WaitTimeout time.Duration
+	Post        time.Duration
+	FollowBaud  bool
+	Race        bool
 }
 
 type Loader struct {
@@ -57,43 +66,13 @@ func New(opts Options) *Loader {
 	if opts.Log == nil {
 		opts.Log, _ = NewLogger("", opts.Verbose, nil)
 	}
-	if opts.AckTimeout == 0 {
-		opts.AckTimeout = 5 * time.Second
-	}
-	if opts.Retries == 0 {
-		opts.Retries = 10
-	}
 	if opts.WaitTimeout == 0 {
 		opts.WaitTimeout = 180 * time.Second
 	}
 	if opts.Post == 0 {
 		opts.Post = 30 * time.Second
 	}
-	if opts.Baud2 == 0 {
-		opts.Baud2 = 1500000
-	}
-	if opts.ResetRetries == 0 {
-		opts.ResetRetries = 3
-	}
-	if opts.DataSize == 0 {
-		opts.DataSize = 88
-	}
-	if opts.Checksum == 0 {
-		opts.Checksum = '1'
-	}
-	if opts.URPLDelay == 0 {
-		opts.URPLDelay = 100 * time.Millisecond
-	}
-	if opts.URPLMaxWait == 0 {
-		opts.URPLMaxWait = 4 * time.Second
-	}
-	if opts.StartDelay == 0 {
-		opts.StartDelay = 150 * time.Millisecond
-	}
-	if opts.Drain == 0 {
-		opts.Drain = 150 * time.Millisecond
-	}
-	return &Loader{opts: opts, log: opts.Log, currentBaud: opts.Baud}
+	return &Loader{opts: opts, log: opts.Log, currentBaud: BootROMBaud}
 }
 
 func (l *Loader) reader() {
@@ -134,15 +113,15 @@ func runPowerCommand(cmd string, log *Logger) error {
 }
 
 func (l *Loader) Run() error {
-	port, err := serial.Open(l.opts.Port, l.opts.Baud)
+	port, err := serial.Open(l.opts.Port, BootROMBaud)
 	if err != nil {
 		return err
 	}
 	l.port = port
-	l.currentBaud = l.opts.Baud
+	l.currentBaud = BootROMBaud
 	defer func() { l.port.Close() }()
 
-	l.parser.SetChecksumType(l.opts.Checksum)
+	l.parser.SetChecksumType(KermitChecksum)
 	l.events = make(chan Event, 4096)
 	l.done = make(chan struct{})
 	go l.reader()
@@ -151,14 +130,14 @@ func (l *Loader) Run() error {
 		return err
 	}
 
-	if l.opts.FinalBaud != 0 {
-		l.log.Progress("mode: FINAL baud %d (start %d); the UART will NOT switch back for U-Boot/Linux",
-			l.opts.FinalBaud, l.opts.Baud)
-	} else if l.opts.FollowBaud {
-		l.log.Progress("mode: follow baud (start %d, FSBL %d, then back to %d)",
-			l.opts.Baud, l.opts.Baud2, l.opts.Baud)
+	if l.opts.FollowBaud {
+		l.log.Progress("mode: vendor follow baud (start %d, FSBL %d, then back to %d at hand-off)",
+			BootROMBaud, FSBLBaud, BootROMBaud)
+	} else {
+		l.log.Progress("mode: row-boot final baud %d (start %d); the UART will NOT switch back for U-Boot/Linux",
+			FSBLBaud, BootROMBaud)
 	}
-	l.log.Progress("waiting for URPL (port %s, %d 8N1)", l.opts.Port, l.opts.Baud)
+	l.log.Progress("waiting for URPL (port %s, %d 8N1)", l.opts.Port, BootROMBaud)
 	st := &state{}
 	start := time.Now()
 
@@ -206,12 +185,12 @@ func (l *Loader) Run() error {
 			if err := l.transfer(req, st); err != nil {
 				if errors.Is(err, errBoardReset) {
 					st.resets++
-					if st.resets > l.opts.ResetRetries {
+					if st.resets > ResetRetries {
 						return fmt.Errorf("board reset during %d transfers; giving up", st.resets)
 					}
 					l.log.Progress("board reset mid-transfer (attempt %d/%d); re-arming for the next URPL",
-						st.resets, l.opts.ResetRetries)
-					l.setBaud(l.opts.Baud)
+						st.resets, ResetRetries)
+					l.setBaud(BootROMBaud)
 					st.uartMode = false
 					st.magicSent = false
 					st.magicPending = false
@@ -330,14 +309,18 @@ func (l *Loader) maybeSendMagic(st *state) {
 		return
 	}
 	ready := st.magicPending || st.answerURPL
-	if !ready && !st.firstURPL.IsZero() && time.Since(st.firstURPL) >= l.opts.URPLMaxWait {
+	if l.opts.Race {
+		// A valid boot0 may never reach the eMMC reset path, so answer the
+		// first prompt immediately instead of waiting for the reset marker.
+		ready = true
+	} else if !ready && !st.firstURPL.IsZero() && time.Since(st.firstURPL) >= URPLMaxWait {
 		ready = true
 	}
 	if !ready {
 		return
 	}
-	if l.opts.URPLDelay > 0 {
-		time.Sleep(l.opts.URPLDelay)
+	if !l.opts.Race {
+		time.Sleep(URPLDelay)
 	}
 	l.sendMagic(st)
 	st.urplSeen = false
@@ -439,26 +422,26 @@ func (l *Loader) observeText(b []byte, st *state) {
 	if !st.baudHint {
 		if bytes.Contains(st.roll, []byte("1500000")) || bytes.Contains(st.roll, []byte("1,500,000")) {
 			st.baudHint = true
-			if l.opts.FinalBaud != 0 && st.baudSwitches == 0 {
-				l.switchBaud(st, l.opts.FinalBaud)
-			} else if l.opts.FollowBaud && st.baudSwitches == 0 {
-				l.switchBaud(st, l.opts.Baud2)
-			} else {
-				l.log.Progress("board mentions 1,500,000 baud; staying at %d (pass --final-baud 1500000 to switch)", l.opts.Baud)
+			if st.baudSwitches == 0 {
+				l.switchBaud(st, FSBLBaud)
 			}
 		}
 	}
 	handoff := bytes.Contains(st.roll, []byte("Jump to monitor")) ||
 		bytes.Contains(st.roll, []byte("Loader_2nd loaded"))
-	if l.opts.FinalBaud != 0 && handoff && !st.handoffLogged {
+	if handoff && !st.handoffLogged {
 		st.handoffLogged = true
-		l.log.Progress("HANDOFF: FSBL -> BL31/U-Boot; leaving the tty at %d baud and never switching back", l.currentBaud)
+		if l.opts.FollowBaud {
+			l.log.Progress("HANDOFF: FSBL -> BL31/U-Boot; switching back to %d baud", BootROMBaud)
+		} else {
+			l.log.Progress("HANDOFF: FSBL -> BL31/U-Boot; leaving the tty at %d baud and never switching back", l.currentBaud)
+		}
 	}
 	if l.opts.FollowBaud && st.baudSwitches == 1 && handoff {
 		// The FSBL hands off to BL31/U-Boot, whose console is normally back
 		// at the original baud.  Switch at the first hand-off marker so the
 		// first U-Boot output is not lost.
-		l.switchBaud(st, l.opts.Baud)
+		l.switchBaud(st, BootROMBaud)
 	}
 }
 
@@ -497,7 +480,7 @@ func (l *Loader) recoverCH347(st *state) error {
 		return err
 	}
 	l.port = p
-	l.parser.SetChecksumType(l.opts.Checksum)
+	l.parser.SetChecksumType(KermitChecksum)
 	l.events = make(chan Event, 4096)
 	l.done = make(chan struct{})
 	l.readErr = nil
@@ -521,10 +504,13 @@ func (l *Loader) switchBaud(st *state, baud int) {
 		l.log.Progress("ERROR switching to %d baud: %v", baud, err)
 		return
 	}
-	if l.opts.FinalBaud != 0 {
-		l.log.Progress("switched UART to %d baud (final; staying here)", baud)
-	} else {
+	switch {
+	case baud == BootROMBaud:
+		l.log.Progress("switched UART back to %d baud for the U-Boot hand-off", baud)
+	case l.opts.FollowBaud:
 		l.log.Progress("switched UART to %d baud (following FSBL/U-Boot)", baud)
+	default:
+		l.log.Progress("switched UART to %d baud (final; staying here)", baud)
 	}
 }
 
@@ -555,10 +541,10 @@ func (l *Loader) handleText(b []byte, st *state) {
 }
 
 func (l *Loader) pacing() time.Duration {
-	if l.currentBaud != l.opts.Baud {
-		return l.opts.PacketDelay2
+	if l.currentBaud != BootROMBaud {
+		return PacketDelay2
 	}
-	return l.opts.PacketDelay
+	return PacketDelay
 }
 
 // attemptFile runs one complete Kermit file transfer.
@@ -570,11 +556,11 @@ func (l *Loader) attemptFile(req rom.Request, data []byte, st *state) error {
 		events:      l.events,
 		log:         l.log,
 		abort:       abortCh,
-		timeout:     l.opts.AckTimeout,
-		retries:     l.opts.Retries,
+		timeout:     AckTimeout,
+		retries:     Retries,
 		delay:       l.pacing(),
-		dataSize:    l.opts.DataSize,
-		checksum:    l.opts.Checksum,
+		dataSize:    DataSize,
+		checksum:    KermitChecksum,
 		setChecksum: l.parser.SetChecksumType,
 		onText: func(b []byte) {
 			l.observeText(b, st)
@@ -598,13 +584,11 @@ func (l *Loader) transfer(req rom.Request, st *state) error {
 	// The ROM finished printing UL_START; give it time to switch from its
 	// prompt routine into the E-Kermit receiver and flush any boot-log bytes
 	// that are still queued in the CH347 before the Send-Init.
-	if l.opts.StartDelay > 0 {
-		time.Sleep(l.opts.StartDelay)
-	}
-	l.drain(st, l.opts.Drain)
+	time.Sleep(StartDelay)
+	l.drain(st, Drain)
 
 	err := l.attemptFile(req, data, st)
-	if err != nil && l.opts.CH347Recover && !errors.Is(err, errBoardReset) && errors.Is(err, errACKTimeout) {
+	if err != nil && !errors.Is(err, errBoardReset) && errors.Is(err, errACKTimeout) {
 		l.log.Progress("no Kermit ACK for offset=%d; assuming CH347 TX wedge, re-authorizing USB and retrying once", req.Offset)
 		if rerr := l.recoverCH347(st); rerr != nil {
 			l.log.Progress("CH347 recovery failed: %v", rerr)
@@ -623,11 +607,7 @@ func (l *Loader) transfer(req rom.Request, st *state) error {
 		// The vendor BL2 ends at FIP offset 0xe800.  The FSBL switches its
 		// UART to 1.5 Mbaud and immediately asks for the next slice, so
 		// switch as soon as the BL2 transfer's B packet is acknowledged.
-		if l.opts.FinalBaud != 0 {
-			l.switchBaud(st, l.opts.FinalBaud)
-		} else if l.opts.FollowBaud {
-			l.switchBaud(st, l.opts.Baud2)
-		}
+		l.switchBaud(st, FSBLBaud)
 	}
 	var total int
 	st.ranges, total = addRange(st.ranges, req.Offset, req.Offset+req.Size)

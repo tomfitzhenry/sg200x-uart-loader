@@ -31,9 +31,10 @@ The vendor Armbian Duo S fallback FIP used for the `--follow-baud` path is
 sha256 382296a757e14070fc956fe348d6f0e4d3efabb07208e8e56117f66dcfd01061
 ```
 
-Capture: CH347 USB-UART on `/dev/ttyACM0`, 115200 8N1 start, loader
-`--final-baud 1500000`, reset-marker gate enabled. See the lab bring-up notes
-for current FIPs, hashes, and full hardware validation:
+Capture: CH347 USB-UART on `/dev/ttyACM0`, 115200 8N1 start, loader in what is
+now the default row-boot mode (1.5 Mbaud final; v0.1.0 spelled this
+`--final-baud 1500000`, removed in v0.2.0), reset-marker gate enabled. See the
+lab bring-up notes for current FIPs, hashes, and full hardware validation:
 
 <https://github.com/tomfitzhenry/labgrid/blob/master/docs/oz64-bringup.md>
 
