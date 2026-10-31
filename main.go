@@ -64,13 +64,14 @@ func main() {
 		p := kermit.DefaultSendParams()
 		p.CHKT = loader.KermitChecksum
 		s, _ := kermit.EncodePacket(0, 'S', kermit.EncodeParams(p), p)
-		mode := "row-boot (stay at 1500000 after the FSBL)"
-		if *followBaud {
-			mode = "vendor follow (switch back to 115200 at hand-off)"
-		}
 		fmt.Printf("dry-run: fip=%s size=%d sha256=%s\n", *fipPath, len(fip), hex.EncodeToString(sum[:]))
-		fmt.Printf("dry-run: port=%s baud=%d final=%d wait=%s post=%s data=%d checksum=%c mode=%s\n",
-			*port, loader.BootROMBaud, loader.FSBLBaud, *waitTimeout, *post, loader.DataSize, loader.KermitChecksum, mode)
+		if *followBaud {
+			fmt.Printf("dry-run: port=%s baud=%d fsbl=%d handoff=%d wait=%s post=%s data=%d checksum=%c mode=follow\n",
+				*port, loader.BootROMBaud, loader.FSBLBaud, loader.BootROMBaud, *waitTimeout, *post, loader.DataSize, loader.KermitChecksum)
+		} else {
+			fmt.Printf("dry-run: port=%s baud=%d fsbl=%d wait=%s post=%s data=%d checksum=%c mode=final\n",
+				*port, loader.BootROMBaud, loader.FSBLBaud, *waitTimeout, *post, loader.DataSize, loader.KermitChecksum)
+		}
 		fmt.Printf("dry-run: send-init=%x\n", s)
 		fmt.Printf("dry-run: first slice 0/4096 would be %d data packets at %d bytes\n",
 			(4096+loader.DataSize-1)/loader.DataSize, loader.DataSize)

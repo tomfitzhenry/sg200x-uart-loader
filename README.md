@@ -12,10 +12,15 @@ SPI; CH347 USB-UART recovery is automatic.
 - **SG2002 and CV181x:** share the SG200x/CV181x platform and BootROM protocol
   and are expected to work with a matching board FIP, but are not
   hardware-validated here.
-- **CV180x:** untested. It uses the same URPL/URDL BootROM family, but the
-  vendor FSBL has no 1.5 Mbaud switch, so do not assume the FSBL baud change.
+- **CV180x:** **unsupported by v0.2.0.** It uses the same URPL/URDL BootROM
+  family, but its vendor FSBL has no 1.5 Mbaud switch. Use v0.1.0 for CV180x
+  experiments.
 - Protocol compatibility is not FIP/board compatibility. Use a matching FIP,
   DDR configuration, UART wiring, and power sequencing.
+
+> **v0.2.0 baud assumption:** v0.2.0 assumes the FSBL switches to **1.5 Mbaud**
+> and has **no 115200-stay mode**. It always moves to 1.5 Mbaud at the FSBL;
+> `--follow-baud` only selects whether to switch back to 115200 at hand-off.
 
 ## Why
 
