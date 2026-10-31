@@ -4,7 +4,8 @@ A Go host loader for the SG200x-family BootROM UART download path, validated on
 the Pine64 Oz64 (SG2000). It serves a CVITEK FIP over the serial console as an
 E-Kermit 1.8 receiver, keeping the port open for every BootROM/FSBL slice
 request. It uses no USB boot/recovery protocol and writes nothing to eMMC or
-SPI; CH347 USB-UART recovery is automatic.
+SPI. Automatic USB-serial re-authorization is a recovery workaround for a CH347
+TX wedge, not a hardware requirement.
 
 ## Compatibility
 
@@ -34,7 +35,9 @@ can still reach U-Boot/Linux. It is a RAM loader, not a flashing tool.
 ## Requirements
 
 - Linux host with Go 1.26.x (no cgo) or a release binary.
-- CH347 USB-UART on `/dev/ttyACM0` (or another tty). 8N1, raw, no flow control.
+- A Linux tty (e.g. `/dev/ttyACM0` or `/dev/ttyUSB0`) whose driver supports
+  115200 and 1,500,000 baud, raw 8N1, no flow control. No VID/PID/driver
+  requirement; hardware validation used a CH347F USB-UART.
 - Oz64 in ARM/A53 mode (J50) with UART0 wired to the adapter.
 - A complete CVITEK FIP (`CVBL01` at offset 0).
 
@@ -103,7 +106,7 @@ defaults. Remove them from scripts:
 | `--data-size` | omit; 88 data bytes / 94-byte packets are fixed |
 | `--ack-timeout`, `--retries`, `--reset-retries` | omit; fixed at 5 s / 10 / 3 |
 | `--packet-delay`, `--packet-delay2`, `--start-delay`, `--drain` | omit; fixed pacing |
-| `--ch347-recover` | omit; CH347 recovery is always on |
+| `--ch347-recover` | omit; automatic USB-serial recovery is built in and attempted on ACK timeouts |
 | `--urpl-delay`, `--urpl-max-wait` | omit, or use `--race` for the old immediate-answer race path |
 
 `--race` answers the first `URPL` immediately. It is equivalent to the v0.1.0
@@ -148,9 +151,11 @@ and E-Kermit receiver over a PTY. It needs no serial hardware.
 - **Silent U-Boot/Linux after the FSBL:** the loader leaves the console at
   1.5 Mbaud. Build U-Boot/Linux with `CONFIG_BAUDRATE=1500000`. Vendor U-Boot
   2021.10 (115200 console) is unsupported; use v0.2.0 for that mode.
-- **CH347 TX wedges:** recovery is automatic; the loader re-authorizes and
-  reopens the device on ACK timeouts. Re-plug or re-authorize the USB port if
-  needed.
+- **USB-serial TX wedge (observed on CH347):** on ACK timeouts the loader
+  closes the tty, toggles the backing USB device's sysfs `authorized` flag
+  0→1, reopens, and retries. This works on USB-backed ttys and fails
+  gracefully on non-USB ttys or PTYs. Re-plug or re-authorize the USB port
+  manually if needed.
 - **Failed run:** nothing is written to storage. Power-cycle and retry.
 
 ## Status
@@ -164,7 +169,8 @@ tests and cross-builds.
 - Project: <https://github.com/tomfitzhenry/sg200x-uart-loader>
 - E-Kermit 1.8: <https://github.com/KermitProject/ekermit>
 - Kermit protocol: <https://kermitproject.org/kproto.pdf>
-- CH347 USB-UART: <https://www.wch-ic.com/products/CH347.html>
+- WCH CH347-family USB-UART (hardware validation used CH347F):
+  <https://www.wch-ic.com/products/CH347.html>
 - Pine64 Oz64: <https://wiki.pine64.org/wiki/Oz64>
 - Evidence: [docs/evidence/README.md](docs/evidence/README.md)
 
