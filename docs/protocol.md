@@ -33,17 +33,21 @@ answering the wrong prompt, races the reset and loses the transfer.
 ### Reset-marker gate
 
 The loader delays `URDL` until it has seen `E:Boot failed` or
-`E:RESET:plat/mars` (plus `--urpl-delay`), so it answers the post-reset prompt
-rather than the early one. If no marker appears within `--urpl-max-wait`
-(default 4 s) it answers anyway as a fallback. A mid-transfer reset is retried
-up to `--reset-retries` times and the gate is re-armed.
+`E:RESET:plat/mars`, then waits the fixed 100 ms URPL delay, so it answers the
+post-reset prompt rather than the early one. If no marker appears within the
+fixed 4 s URPL max wait it answers anyway as a fallback. A mid-transfer reset is
+retried up to the fixed 3 reset retries and the gate is re-armed.
+
+`--race` skips the gate, the URPL delay, and the max wait: it answers the first
+`URPL` immediately. This is for a valid boot0, where the ROM may never reach
+the eMMC reset path.
 
 ### Valid boot0 race
 
 With a valid boot0 the ROM can boot eMMC directly and never present a usable
 `URPL` to the loader. In that case the lab uses the race path: a long
-`--wait-timeout`, near-zero `--urpl-max-wait`/`--urpl-delay`, and several
-power cycles. This is a boot-order race, not a protocol change.
+`--wait-timeout`, `--race`, and several power cycles. This is a boot-order
+race, not a protocol change.
 
 ## Requests
 
@@ -78,11 +82,12 @@ The loader sends standard short Kermit packets:
 | `Z` | EOF |
 | `B` | EOT |
 
-- Maximum packet 94 bytes, maximum data field 88 bytes (`--data-size` 16..88).
+- The 94-byte maximum packet, 88-byte maximum data field, and checksum type 1
+  are fixed protocol limits. Type 3 (CRC-16) remains implemented and tested,
+  but the SG200x E-Kermit NAKs it (`01 23 20 4e 33 0d`), so the loader always
+  sends type 1.
 - Sequence numbers are modulo 64; the window is 1, so each `D` is ACKed before
   the next is sent.
-- Checksum type 1 (6-bit sum) is the default. Type 3 (CRC-16) is implemented
-  but the SG200x E-Kermit NAKs it (`01 23 20 4e 33 0d`).
 - Control bytes, `#`, and `~` are quoted with `#`; high-bit data are sent
   transparently (`QBIN=Y`, `ebq=false`).
 - ACK/NAK/`E` packets are parsed; NAKs, timeouts, and stale ACKs trigger a
@@ -103,25 +108,27 @@ The ROM and BL2 run at 115200 8N1. At the FSBL the peer switches its console to
 1,500,000 and continues the same request protocol. The loader never closes the
 tty; it only changes the line speed.
 
-- `--final-baud 1500000` switches at the FSBL and stays there. Use this for
+- The default switches to 1500000 at the FSBL and stays there. This is
   row-boot U-Boot/Linux built with `CONFIG_BAUDRATE=1500000`.
-- `--follow-baud` switches to `--baud2` and then back to `--baud` at hand-off.
-  This is legacy vendor-U-Boot-2021.10 (115200) behaviour. Switching back can
+- `--follow-baud` switches to 1500000 at the FSBL and back to 115200 at
+  hand-off. This is legacy vendor-U-Boot-2021.10 behaviour. Switching back can
   wedge the CH347 TX path, so do not use it with row-boot 2026.07.
 - CV180x uses the same URPL/URDL BootROM family but its vendor FSBL has no
-  1.5 Mbaud switch, so `--final-baud 1500000` is not applicable there.
+  1.5 Mbaud switch, so the FSBL baud change is not applicable there.
 
 ## Pacing, retries, recovery
 
-- `--packet-delay` (default 2 ms) paces ACKed packets at 115200;
-  `--packet-delay2` does the same at the final baud (default 0).
-- `--start-delay` (150 ms) waits after `UL_START` before Send-Init;
-  `--drain` (150 ms) discards stale boot-log bytes.
-- `--ack-timeout` (5 s) and `--retries` (10) bound per-packet recovery.
-- `--reset-retries` (3) re-arms the reset gate and retries a mid-transfer
-  reset.
-- `--ch347-recover` (default) re-authorizes the USB device and reopens the tty
-  when ACKs stop, avoiding a manual unplug.
+These timing and recovery values are fixed constants in v0.2.0:
+
+- 2 ms packet pacing at 115200, 0 at the final baud.
+- 150 ms `start-delay` after `UL_START` before Send-Init, and a 150 ms drain of
+  stale boot-log bytes.
+- 5 s ACK timeout and 10 packet retries bound per-packet recovery.
+- 3 reset retries re-arm the reset gate after a mid-transfer reset.
+- CH347 recovery is always on: on ACK timeouts the loader re-authorizes the USB
+  device and reopens the tty, avoiding a manual unplug.
+
+Only `--wait-timeout` and `--post` remain timing knobs.
 
 A failed run writes nothing to eMMC, SPI, or NAND; power-cycle and retry.
 
