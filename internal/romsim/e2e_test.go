@@ -77,6 +77,11 @@ type scenario struct {
 
 func runScenario(t *testing.T, fipPath string, fip []byte, cfg romsim.Config) scenario {
 	t.Helper()
+	return runScenarioArgs(t, fipPath, fip, cfg)
+}
+
+func runScenarioArgs(t *testing.T, fipPath string, fip []byte, cfg romsim.Config, extra ...string) scenario {
+	t.Helper()
 
 	master, slave, err := romsim.OpenPTY()
 	if err != nil {
@@ -102,21 +107,11 @@ func runScenario(t *testing.T, fipPath string, fip []byte, cfg romsim.Config) sc
 		"--port", slave.Name(),
 		"--fip", fipPath,
 		"--power-cmd", "touch " + readyFile,
-		"--baud", "115200",
-		"--final-baud", "1500000",
 		"--wait-timeout", "3s",
 		"--post", "300ms",
-		"--ack-timeout", "500ms",
-		"--retries", "1",
-		"--packet-delay", "0",
-		"--packet-delay2", "0",
-		"--urpl-delay", "1ms",
-		"--urpl-max-wait", "1s",
-		"--start-delay", "1ms",
-		"--drain", "1ms",
-		"--ch347-recover=false",
 		"--log", logPath,
 	}
+	args = append(args, extra...)
 	cmd := exec.Command(testBinary, args...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -280,11 +275,77 @@ func TestLoaderAgainstSimulatedROM(t *testing.T) {
 		t.Logf("normal scenario completed in %s", sc.elapsed)
 	})
 
+	t.Run("vendor-follow-baud", func(t *testing.T) {
+		// Stop at the simulated hand-off: the vendor FSBL hands off once it
+		// has served its slices, so no further requests arrive at 115200.
+		followFIP := testFIP(8192)
+		followPath := filepath.Join(t.TempDir(), "fip.bin")
+		if err := os.WriteFile(followPath, followFIP, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sc := runScenarioArgs(t, followPath, followFIP, romsim.Config{
+			EarlyPrompt:      true,
+			BaudSwitchMarker: true,
+		}, "--follow-baud")
+		if sc.serveErr != nil {
+			t.Fatalf("simulator: %v\nloader stderr:\n%s\nloader log:\n%s", sc.serveErr, sc.stderr, sc.log)
+		}
+		if sc.exitCode != 0 {
+			t.Fatalf("loader exit %d\nstdout:\n%s\nstderr:\n%s\nlog:\n%s", sc.exitCode, sc.stdout, sc.stderr, sc.log)
+		}
+		if sc.sim.MagicCount != 1 {
+			t.Fatalf("URDL count = %d, want 1", sc.sim.MagicCount)
+		}
+		checkSlices(t, sc.sim.Slices, followFIP, []romsim.Slice{
+			{Offset: 0, Size: 4096},
+			{Offset: 4096, Size: 4096},
+		})
+		if !strings.Contains(sc.log, "switched UART back to 115200 baud") {
+			t.Fatalf("loader log is missing the hand-off switch back\nlog:\n%s", sc.log)
+		}
+		if !strings.Contains(sc.log, "FIP complete: 8192/8192 bytes served") {
+			t.Fatalf("loader log is missing the completion line\nlog:\n%s", sc.log)
+		}
+		t.Logf("follow-baud scenario completed in %s", sc.elapsed)
+	})
+
+	t.Run("race-valid-boot0", func(t *testing.T) {
+		sc := runScenarioArgs(t, fipPath, fip, romsim.Config{
+			Race:             true,
+			BaudSwitchMarker: true,
+		}, "--race")
+		if sc.serveErr != nil {
+			t.Fatalf("simulator: %v\nloader stderr:\n%s\nloader log:\n%s", sc.serveErr, sc.stderr, sc.log)
+		}
+		if sc.exitCode != 0 {
+			t.Fatalf("loader exit %d\nstdout:\n%s\nstderr:\n%s\nlog:\n%s", sc.exitCode, sc.stdout, sc.stderr, sc.log)
+		}
+		if sc.sim.MagicCount != 1 {
+			t.Fatalf("URDL count = %d, want 1", sc.sim.MagicCount)
+		}
+		checkRequests(t, sc.sim.Requests, [][2]int{
+			{0, 4096},
+			{4096, 4096},
+			{8192, 1808},
+		})
+		checkSlices(t, sc.sim.Slices, fip, wantSlices())
+		if !sc.sim.FinalBaudObserved {
+			t.Fatal("slave tty never reached 1500000 baud")
+		}
+		if !strings.Contains(sc.log, "FIP complete: 10000/10000 bytes served") {
+			t.Fatalf("loader log is missing the completion line\nlog:\n%s", sc.log)
+		}
+		t.Logf("race scenario completed in %s", sc.elapsed)
+	})
+
 	t.Run("mid-transfer-reset", func(t *testing.T) {
 		sc := runScenario(t, fipPath, fip, romsim.Config{
 			EarlyPrompt:           true,
 			ResetAfterDataPackets: 3,
 			BaudSwitchMarker:      true,
+			// Keep re-prompts slower than the loader's fixed 100 ms URPL
+			// delay so the test observes one URDL per simulated prompt.
+			ResetPromptInterval: 300 * time.Millisecond,
 		})
 		if sc.serveErr != nil {
 			t.Fatalf("simulator: %v\nloader stderr:\n%s\nloader log:\n%s", sc.serveErr, sc.stderr, sc.log)
